@@ -150,7 +150,7 @@ mediaRoutes.post<
       return next({ status: 404, message: 'Media does not exist.' });
     }
 
-    const is4k = Boolean(req.body.is4k);
+    const is4k = String(req.body.is4k) === 'true';
 
     switch (req.params.status) {
       case 'available':
@@ -183,16 +183,16 @@ mediaRoutes.post<
             message: 'Only series can be set to be partially available',
           });
         }
-        media.status = MediaStatus.PARTIALLY_AVAILABLE;
+        media[is4k ? 'status4k' : 'status'] = MediaStatus.PARTIALLY_AVAILABLE;
         break;
       case 'processing':
-        media.status = MediaStatus.PROCESSING;
+        media[is4k ? 'status4k' : 'status'] = MediaStatus.PROCESSING;
         break;
       case 'pending':
-        media.status = MediaStatus.PENDING;
+        media[is4k ? 'status4k' : 'status'] = MediaStatus.PENDING;
         break;
       case 'unknown':
-        media.status = MediaStatus.UNKNOWN;
+        media[is4k ? 'status4k' : 'status'] = MediaStatus.UNKNOWN;
     }
 
     await mediaRepository.save(media);
@@ -236,50 +236,42 @@ mediaRoutes.delete(
         where: { id: Number(req.params.id) },
       });
 
-      const is4k = req.query.is4k === 'true';
+      const is4k = String(req.query.is4k) === 'true';
       const isMovie = media.mediaType === MediaType.MOVIE;
+      const isTv = media.mediaType === MediaType.TV;
 
       let serviceSettings;
       if (isMovie) {
         serviceSettings = settings.radarr.find(
           (radarr) => radarr.isDefault && radarr.is4k === is4k
         );
-
-        if (
-          media.serviceId &&
-          media.serviceId >= 0 &&
-          serviceSettings?.id !== media.serviceId
-        ) {
-          serviceSettings = settings.radarr.find(
-            (radarr) => radarr.id === media.serviceId
-          );
-        }
-      } else if (media.mediaType === MediaType.TV) {
+      } else if (isTv) {
         serviceSettings = settings.sonarr.find(
           (sonarr) => sonarr.isDefault && sonarr.is4k === is4k
         );
-
-        if (
-          media.serviceId &&
-          media.serviceId >= 0 &&
-          serviceSettings?.id !== media.serviceId
-        ) {
-          serviceSettings = settings.sonarr.find(
-            (sonarr) => sonarr.id === media.serviceId
-          );
-        }
-      } else if (media.mediaType === MediaType.MUSIC) {
+      } else {
         serviceSettings = settings.lidarr.find((lidarr) => lidarr.isDefault);
+      }
 
-        if (
-          media.serviceId &&
-          media.serviceId >= 0 &&
-          serviceSettings?.id !== media.serviceId
-        ) {
-          serviceSettings = settings.lidarr.find(
-            (lidarr) => lidarr.id === media.serviceId
+      const specificServiceId = is4k ? media.serviceId4k : media.serviceId;
+      if (
+        specificServiceId &&
+        specificServiceId >= 0 &&
+        serviceSettings?.id !== specificServiceId
+      ) {
+        if (isMovie) {
+          serviceSettings = settings.radarr.find(
+            (radarr) => radarr.id === specificServiceId
           );
         }
+      } else if (isTv) {
+        serviceSettings = settings.sonarr.find(
+          (sonarr) => sonarr.id === specificServiceId
+        );
+      } else {
+        serviceSettings = settings.lidarr.find(
+          (lidarr) => lidarr.id === media.serviceId //always non-4k for lidarr obviously
+        );
       }
 
       if (!serviceSettings) {
@@ -306,25 +298,32 @@ mediaRoutes.delete(
 
       let service;
 
-      if (media.mediaType === MediaType.MOVIE) {
+      if (isMovie) {
         service = new RadarrAPI({
           apiKey: serviceSettings.apiKey,
           url: RadarrAPI.buildUrl(serviceSettings, '/api/v3'),
         });
+      } else if (isTv) {
+        service = new SonarrAPI({
+          apiKey: serviceSettings?.apiKey,
+          url: SonarrAPI.buildUrl(serviceSettings, '/api/v3'),
+        });
+      } else {
+        service = new LidarrAPI({
+          apiKey: serviceSettings.apiKey,
+          url: LidarrAPI.buildUrl(serviceSettings, '/api/v1'),
+        });
+      }
 
-        await service.removeMovie(
+      if (isMovie) {
+        await (service as RadarrAPI).removeMovie(
           parseInt(
             is4k
               ? (media.externalServiceSlug4k as string)
               : (media.externalServiceSlug as string)
           )
         );
-      } else if (media.mediaType === MediaType.TV) {
-        service = new SonarrAPI({
-          apiKey: serviceSettings.apiKey,
-          url: SonarrAPI.buildUrl(serviceSettings, '/api/v3'),
-        });
-
+      } else if (isTv) {
         const tmdb = new TheMovieDb();
         const series = await tmdb.getTvShow({ tvId: media.tmdbId });
         const tvdbId = series.external_ids.tvdb_id ?? media.tvdbId;
@@ -333,14 +332,9 @@ mediaRoutes.delete(
           throw new Error('TVDB ID not found');
         }
 
-        await service.removeSeries(tvdbId);
+        await (service as SonarrAPI).removeSeries(tvdbId);
       } else if (media.mediaType === MediaType.MUSIC) {
-        service = new LidarrAPI({
-          apiKey: serviceSettings.apiKey,
-          url: LidarrAPI.buildUrl(serviceSettings, '/api/v1'),
-        });
-
-        await service.removeAlbum(
+        await (service as LidarrAPI).removeAlbum(
           media.externalServiceId
             ? parseInt(media.externalServiceId.toString())
             : 0

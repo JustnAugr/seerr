@@ -146,9 +146,9 @@ class JellyfinAPI extends ExternalAPI {
 
     let authHeaderVal: string;
     if (authToken) {
-      authHeaderVal = `MediaBrowser Client="Seerr", Device="Seerr", DeviceId="${safeDeviceId}", Version="${getAppVersion()}", Token="${authToken}"`;
+      authHeaderVal = `MediaBrowser Client="Seerr", Device="Seerr", Client="Seerr", DeviceId="${safeDeviceId}", Version="${getAppVersion()}", Token="${authToken}"`;
     } else {
-      authHeaderVal = `MediaBrowser Client="Seerr", Device="Seerr", DeviceId="${safeDeviceId}", Version="${getAppVersion()}"`;
+      authHeaderVal = `MediaBrowser Client="Seerr", Device="Seerr", Client="Seerr", DeviceId="${safeDeviceId}", Version="${getAppVersion()}"`;
     }
 
     super(
@@ -156,7 +156,7 @@ class JellyfinAPI extends ExternalAPI {
       {},
       {
         headers: {
-          'X-Emby-Authorization': authHeaderVal,
+          'Authorization': authHeaderVal,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
@@ -173,7 +173,7 @@ class JellyfinAPI extends ExternalAPI {
   ): Promise<JellyfinLoginResponse> {
     const authenticate = async (useHeaders: boolean) => {
       const headers =
-        useHeaders && ClientIP ? { 'X-Forwarded-For': ClientIP } : {};
+        useHeaders && ClientIP ? { 'X-Forwarded-For': ClientIP, 'Client': 'Seerr' } : {};
 
       return this.post<JellyfinLoginResponse>(
         '/Users/AuthenticateByName',
@@ -191,7 +191,7 @@ class JellyfinAPI extends ExternalAPI {
       logger.debug('Failed to authenticate with headers', {
         label: 'Jellyfin API',
         error: e.response?.statusText,
-        ip: ClientIP,
+        ip: ClientIP
       });
 
       if (!e.response?.status) {
